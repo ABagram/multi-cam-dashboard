@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Vision Monitor - Freenove ESP32</title>
+    <style>
+        /* Modern Dark Theme (SAME AS BEFORE) */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            padding: 20px;
+            color: #ffffff;
+            font-size: 2.5em;
+            letter-spacing: 2px;
+            border-bottom: 2px solid #2e86de;
+            margin-bottom: 30px;
+        }
+
+        .grid-container {
+            display: grid;
+            /* Default to 1 column for very small screens */
+            grid-template-columns: 1fr;
+            gap: 20px;
+            max-width: 1600px;
+            /* Wider max width for the 3 columns */
+            margin: 0 auto;
+        }
+
+        /* Add this block to force 3 columns on screens wider than 1500px */
+        @media (min-width: 1080px) {
+            .grid-container {
+                grid-template-columns: repeat(3, 1fr);
+                /* Force 3 columns */
+            }
+        }
+
+        .robot-panel {
+            background-color: #2c2c44;
+            border: 1px solid #3e3e5c;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header Bar (Title and Status) */
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background-color: #3e3e5c;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        /* Status Indicator */
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            font-size: 0.9em;
+        }
+
+        .status-light {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            transition: background-color 0.5s;
+        }
+
+        .status-online {
+            background-color: #27ae60;
+        }
+
+        /* Green */
+        .status-offline {
+            background-color: #e74c3c;
+        }
+
+        /* Red */
+
+        /* Video Feed and Info */
+        .video-container {
+            position: relative;
+            background-color: #000;
+            min-height: 300px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-grow: 1;
+        }
+
+        .video-container img {
+            /* KEEPING THE SIMPLER STREAM LOGIC HERE */
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        .placeholder-text {
+            position: absolute;
+            color: #7f8c8d;
+            font-size: 1.5em;
+            font-weight: bold;
+            text-align: center;
+            /* Hide by default, show only when ping fails */
+            display: none;
+        }
+
+        /* Data/Sensor Footer */
+        .panel-footer {
+            padding: 10px 15px;
+            background-color: #1a1a2e;
+            border-top: 1px dashed #3e3e5c;
+        }
+
+        .data-item {
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .data-label {
+            color: #2ecc71;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🤖 Robot Fleet Vision & Data Monitor</h1>
+    <div class="grid-container">
+        {% for name, url in feeds.items() %}
+        <div class="robot-panel" data-name="{{ name }}" data-stream-url="{{ url }}">
+            <div class="panel-header">
+                <span>Robot: {{ name }}</span>
+                <div class="status-indicator" id="status-{{ name }}">
+                    <div class="status-light status-offline"></div>
+                    <span class="status-text">Checking...</span>
+                </div>
+            </div>
+
+            <div class="video-container">
+                <img id="stream-img-{{ name }}" src="{{ url }}" alt="{{ name }} Vision Feed" />
+                <span class="placeholder-text" id="placeholder-{{ name }}">BOARD OFFLINE</span>
+            </div>
+
+            <div class="panel-footer">
+                <div class="data-item"><span class="data-label">Status:</span> <span
+                        id="data-status-{{ name }}">Unknown</span></div>
+                <div class="data-item"><span class="data-label">Operating Temperature:</span> <span
+                        id="data-temp-{{ name }}">N/A</span>
+                </div>
+                <div class="data-item"><span class="data-label">Received Signal Strength Indicator (RSSI):</span> <span
+                        id="data-rssi-{{ name }}">N/A</span>
+                </div>
+                <div class="data-item"><span class="data-label">Total Available Memory:</span> <span
+                        id="data-psram-{{ name }}">N/A</span>
+                </div>
+                <div class="data-item"><span class="data-label">Uptime:</span> <span
+                        id="data-uptime-{{ name }}">N/A</span></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        // --- CORE STATUS CHECK LOGIC ---
+        function checkBoardStatus() {
+            document.querySelectorAll('.robot-panel').forEach(panel => {
+                const robotName = panel.dataset.name;
+                const streamUrl = panel.dataset.streamUrl;
+
+                // 1. Define Check URLs
+                // Stable Ping Check: http://192.168.1.103/
+                const checkUrl = streamUrl.replace(':81/stream', '/');
+                // Sensor Data Check: http://192.168.1.103/status.json
+                const statusJsonUrl = streamUrl.replace(':81/stream', '/status.json');
+
+                const statusLight = document.querySelector(`#status-${robotName} .status-light`);
+                const statusText = document.querySelector(`#status-${robotName} .status-text`);
+                const streamImg = document.getElementById(`stream-img-${robotName}`);
+                const placeholder = document.getElementById(`placeholder-${robotName}`);
+
+                // Set initial status to Checking
+                statusLight.className = 'status-light';
+                statusText.textContent = 'Checking...';
+
+                // Use fetch for the stable Port 80 connection check
+                fetch(checkUrl, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' })
+                    .then(response => {
+                        // BOARD IS ONLINE - Update Status Light and fetch sensor data
+                        statusLight.className = 'status-light status-online';
+                        statusText.textContent = 'ONLINE';
+
+                        streamImg.style.display = 'block';
+                        placeholder.style.display = 'none';
+
+                        // 2. Fetch Sensor Data (on successful connection)
+                        return fetch(statusJsonUrl)
+                            .then(res => res.json())
+                            .then(data => {
+                                // 3. Update Dashboard Footer with Data
+                                document.getElementById(`data-status-${robotName}`).textContent = 'Operational';
+                                document.getElementById(`data-temp-${robotName}`).textContent = `${data.temp} °C`;
+                                document.getElementById(`data-rssi-${robotName}`).textContent = `${data.rssi} dBm`;
+
+                                // Convert PSRAM to Megabytes for easier reading
+                                const psramMB = (data.psram_free / (1024 * 1024)).toFixed(2);
+                                document.getElementById(`data-psram-${robotName}`).textContent = `${psramMB} MB Free`;
+
+                                // Format Uptime
+                                const uptimeFormatted = `${data.uptime_h}h ${data.uptime_m}m ${data.uptime_s}s`;
+                                document.getElementById(`data-uptime-${robotName}`).textContent = uptimeFormatted;
+                            })
+                            .catch(error => {
+                                // Handle failure to fetch the JSON data (e.g., if the status endpoint fails)
+                                console.error(`Error fetching data for ${robotName}:`, error);
+                                document.getElementById(`data-status-${robotName}`).textContent = 'Data Error';
+                            });
+                    })
+                    .catch(error => {
+                        // BOARD IS OFFLINE (Unreachable on Port 80)
+                        statusLight.className = 'status-light status-offline';
+                        statusText.textContent = 'OFFLINE';
+
+                        streamImg.style.display = 'none';
+                        placeholder.style.display = 'block';
+
+                        // Clear sensor data
+                        document.getElementById(`data-status-${robotName}`).textContent = 'Unreachable';
+                        document.getElementById(`data-temp-${robotName}`).textContent = 'N/A';
+                        document.getElementById(`data-rssi-${robotName}`).textContent = 'N/A';
+                        document.getElementById(`data-psram-${robotName}`).textContent = 'N/A';
+                        document.getElementById(`data-uptime-${robotName}`).textContent = 'N/A';
+                    });
+            });
+        }
+        // Run immediately and every 5 seconds (as before)
+        checkBoardStatus();
+        setInterval(checkBoardStatus, 5000);
+
+    </script>
+</body>
+
+</html>
