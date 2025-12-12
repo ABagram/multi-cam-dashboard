@@ -4,8 +4,8 @@
 ### Software
 |Software|Installation Link|
 |--------|------|
-|Arduino IDE||
-|Visual Studio Code||
+|Arduino IDE|https://www.arduino.cc/en/software/|
+|Visual Studio Code|https://code.visualstudio.com/|
 ### Components
 |Component|Function|Notes|
 |---------|---------|----|
